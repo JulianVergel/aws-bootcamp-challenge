@@ -1,0 +1,40 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: julianvergel
+# "app" enables Serverless Framework Dashboard features and sharing them with other Services.
+app: serverless-api
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: serverless-api
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-2
+
+plugins:
+  - serverless-offline
+
+functions:
+  createUser:
+    handler: handler.createUser
+    events:
+      - httpApi:
+          path: /users
+          method: post
+  getUser:
+    handler: handler.getUser
+    events:
+      - httpApi:
+          path: /users/{id}
+          method: get
+  updateUser:
+    handler: handler.updateUser
+    events:
+      - httpApi:
+          path: /users/{id}
+          method: put
+  deleteUser:
+    handler: handler.deleteUser
+    events:
+      - httpApi:
+          path: /users/{id}
+          method: delete
