@@ -1,89 +1,94 @@
 'use strict';
 
-const getBody = (event) => {
-  if (typeof event.body === 'string') {
-    return JSON.parse(event.body);
-  }
-  return event.body;
-};
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, PutCommand, GetCommand, UpdateCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+const crypto = require("crypto");
+const { HTTP_STATUS, MESSAGES } = require('./constants');
 
-// --- Función para CREAR un usuario (POST /users) ---
-module.exports.createUser = async (event) => {
-  try {
-    const userData = getBody(event);
-    console.log('Recibida petición para crear usuario:', userData);
+const docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const USERS_TABLE = process.env.USERS_TABLE;
 
-    const response = {
-      message: "Usuario creado exitosamente (simulación)",
-      userData: userData,
-    };
-
-    return {
-      statusCode: 201,
-      body: JSON.stringify(response, null, 2),
-    };
-  } catch (error) {
-    console.error("Error al parsear el body:", error);
-    return {
-      statusCode: 400, // Bad Request
-      body: JSON.stringify({ message: "El cuerpo de la petición no es un JSON válido." }),
-    };
-  }
-};
-
-// --- Función para CONSULTAR un usuario (GET /users/{id}) ---
-module.exports.getUser = async (event) => {
-  const userId = event.pathParameters.id;
-  console.log('Recibida petición para consultar el usuario con ID:', userId);
-
-  const user = {
-    id: userId,
-    nombre: "Juan Gabriel",
-    email: "juangabriel@eldivo.com",
-  };
-
+// --- FUNCIÓN AUXILIAR PARA CREAR RESPUESTAS ---
+const createResponse = (statusCode, body) => {
   return {
-    statusCode: 200,
-    body: JSON.stringify(user, null, 2),
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
+    body: JSON.stringify(body),
   };
 };
 
-// --- Función para ACTUALIZAR un usuario (PUT /users/{id}) ---
-module.exports.updateUser = async (event) => {
-  try {
-    const userId = event.pathParameters.id;
-    const updatedData = getBody(event);
-    console.log('Recibida petición para actualizar el usuario con ID:', userId);
+// --- LÓGICA DE NEGOCIO SEPARADA ---
+const createUserLogic = async (event) => {
+  const userData = JSON.parse(event.body);
+  if (!userData.name || !userData.email) {
+    return createResponse(HTTP_STATUS.BAD_REQUEST, { message: MESSAGES.REQUIRED_FIELDS }); // <-- USANDO CONSTANTE
+  }
 
-    const response = {
-      message: `Usuario con ID ${userId} actualizado exitosamente (simulación)`,
-      updatedData: updatedData,
-    };
+  const userId = crypto.randomUUID();
+  const params = {
+    TableName: USERS_TABLE,
+    Item: { id: userId, name: userData.name, email: userData.email },
+  };
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify(response, null, 2),
-    };
-  } catch (error) {
-    console.error("Error al parsear el body:", error);
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ message: "El cuerpo de la petición no es un JSON válido." }),
-    };
+  await docClient.send(new PutCommand(params));
+  return createResponse(HTTP_STATUS.CREATED, { message: MESSAGES.USER_CREATED_SUCCESS, userId });
+};
+
+const getUserLogic = async (event) => {
+  const userId = event.pathParameters.id;
+  const params = { TableName: USERS_TABLE, Key: { id: userId } };
+  const { Item } = await docClient.send(new GetCommand(params));
+
+  if (Item) {
+    return createResponse(HTTP_STATUS.OK, Item);
+  } else {
+    return createResponse(HTTP_STATUS.NOT_FOUND, { message: MESSAGES.USER_NOT_FOUND });
   }
 };
 
-// --- Función para ELIMINAR un usuario (DELETE /users/{id}) ---
-module.exports.deleteUser = async (event) => {
+const updateUserLogic = async (event) => {
   const userId = event.pathParameters.id;
-  console.log('Recibida petición para eliminar el usuario con ID:', userId);
+  const updatedData = JSON.parse(event.body);
+  if (!updatedData.name || !updatedData.email) {
+    return createResponse(HTTP_STATUS.BAD_REQUEST, { message: MESSAGES.REQUIRED_FIELDS }); // <-- USANDO CONSTANTE
+  }
 
-  const response = {
-    message: `Usuario con ID ${userId} eliminado exitosamente (simulación)`,
+  const params = {
+    TableName: USERS_TABLE,
+    Key: { id: userId },
+    UpdateExpression: "set #name = :n, email = :e",
+    ExpressionAttributeNames: { "#name": "name" },
+    ExpressionAttributeValues: { ":n": updatedData.name, ":e": updatedData.email },
+    ReturnValues: "ALL_NEW",
   };
 
-  return {
-    statusCode: 200,
-    body: JSON.stringify(response, null, 2),
-  };
+  const { Attributes } = await docClient.send(new UpdateCommand(params));
+  return createResponse(HTTP_STATUS.OK, Attributes);
 };
+
+const deleteUserLogic = async (event) => {
+  const userId = event.pathParameters.id;
+  const params = { TableName: USERS_TABLE, Key: { id: userId } };
+  await docClient.send(new DeleteCommand(params));
+  return createResponse(HTTP_STATUS.OK, { message: MESSAGES.USER_DELETED_SUCCESS });
+};
+
+// --- MANEJADORES DE LAMBDA (WRAPPERS CON MANEJO DE ERRORES) ---
+const errorHandlerWrapper = (handler) => async (event) => {
+  try {
+    return await handler(event);
+  } catch (error) {
+    console.error(MESSAGES.COULD_NOT_ERROR_CONTROL, error);
+    const errorMessageKey = `COULD_NOT_${handler.name.replace('Logic', '').toUpperCase()}_USER`;
+    const errorMessage = MESSAGES[errorMessageKey] || MESSAGES.INTERNAL_SERVER_ERROR;
+    return createResponse(HTTP_STATUS.INTERNAL_SERVER_ERROR, { message: errorMessage, error: error.message });
+  }
+};
+
+module.exports.createUser = errorHandlerWrapper(createUserLogic);
+module.exports.getUser = errorHandlerWrapper(getUserLogic);
+module.exports.updateUser = errorHandlerWrapper(updateUserLogic);
+module.exports.deleteUser = errorHandlerWrapper(deleteUserLogic);
