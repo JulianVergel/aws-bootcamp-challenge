@@ -24,6 +24,11 @@ const MESSAGES = {
 
   COULD_NOT_ERROR_CONTROL: "Error no controlado: ",
   INTERNAL_SERVER_ERROR: "Error interno del servidor.",
+
+  NOTIFICATION_PROCESS_COMPLETE: "Proceso de notificaciones completado.",
+  WELCOME_EMAIL_SUBJECT: "¡Bienvenido a Nuestra Plataforma!",
+  WELCOME_EMAIL_BODY: "¡Bienvenido a bordo, {name}! Estamos felices de tenerte. Tu ID de usuario es {id} y tu correo es {email}.",
+  ERROR_SENDING_NOTIFICATION: "Error al enviar la notificación SNS."
 };
 
 module.exports = {
