@@ -18,8 +18,39 @@ provider:
         - "dynamodb:DeleteItem"
       Resource:
         - "arn:aws:dynamodb:us-east-2:249652205214:table/UsersTable"
+    - Effect: "Allow"
+      Action:
+        - "sns:Publish"
+      Resource:
+        - Ref: UserNotificationsTopic
+    - Effect: "Allow"
+      Action:
+        - "sqs:ReceiveMessage"
+        - "sqs:DeleteMessage"
+      Resource:
+        Fn::GetAtt: [ UserCreatedQueue, Arn ]
+    - Effect: "Allow"
+      Action:
+        - "sqs:SendMessage"
+      Resource:
+        Fn::GetAtt: [ UserCreatedQueue, Arn ]
   environment:
     USERS_TABLE: UsersTable
+    NOTIFICATIONS_TOPIC_ARN:
+      Ref: UserNotificationsTopic
+    USER_CREATED_QUEUE_URL:
+      Ref: UserCreatedQueue
+
+resources:
+  Resources:
+    UserCreatedQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: UserCreatedQueue
+    UserNotificationsTopic:
+      Type: "AWS::SNS::Topic"
+      Properties:
+        TopicName: UserNotificationsTopic
 
 plugins:
   - serverless-offline
@@ -49,3 +80,9 @@ functions:
       - httpApi:
           path: /users/{id}
           method: delete
+  sendEmail:
+    handler: handler.sendEmail
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [ UserCreatedQueue, Arn ]
