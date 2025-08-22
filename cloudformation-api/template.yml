@@ -1,0 +1,263 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Pila de CloudFormation para el microservicio de usuarios, recreando
+  la funcionalidad de las HUs 7, 8 y 9.
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: El nombre del bucket de S3 donde está el código de las Lambdas.
+    Default: reto-aws-lambda-code-cloudformation
+  S3ObjectKey:
+    Type: String
+    Description: El nombre (ruta) del archivo .zip en el bucket.
+    Default: lambda-code.zip
+
+Resources:
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: UsersTable-CFN
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+      BillingMode: PAY_PER_REQUEST
+  UserCreatedQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: UserCreatedQueue-CFN
+  UserNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: UserNotificationsTopic-CFN
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UserApiLambdaExecutionRole-CFN
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: UserApiLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt UsersTable.Arn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref UserNotificationsTopic
+              - Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:SendMessage
+                Resource: !GetAtt UserCreatedQueue.Arn
+  CreateUserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: createUser-CFN
+      Handler: handler.createUser
+      Runtime: nodejs20.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+          USER_CREATED_QUEUE_URL: !Ref UserCreatedQueue
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3ObjectKey
+  GetUserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: getUser-CFN
+      Handler: handler.getUser
+      Runtime: nodejs20.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3ObjectKey
+  UpdateUserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: updateUser-CFN
+      Handler: handler.updateUser
+      Runtime: nodejs20.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3ObjectKey
+  DeleteUserFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: deleteUser-CFN
+      Handler: handler.deleteUser
+      Runtime: nodejs20.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3ObjectKey
+  SendEmailFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sendEmail-CFN
+      Handler: handler.sendEmail
+      Runtime: nodejs20.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          NOTIFICATIONS_TOPIC_ARN: !Ref UserNotificationsTopic
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3ObjectKey
+  UsersApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: UsersApi-CFN
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+  CreateUserIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref UsersApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt CreateUserFunction.Arn
+      PayloadFormatVersion: "2.0"
+  GetUserIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref UsersApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt GetUserFunction.Arn
+      PayloadFormatVersion: "2.0"
+  UpdateUserIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref UsersApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt UpdateUserFunction.Arn
+      PayloadFormatVersion: "2.0"
+  DeleteUserIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref UsersApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DeleteUserFunction.Arn
+      PayloadFormatVersion: "2.0"
+  CreateUserRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref UsersApi
+      RouteKey: "POST /users"
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref CreateUserIntegration
+  GetUserRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref UsersApi
+      RouteKey: "GET /users/{id}"
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref GetUserIntegration
+  UpdateUserRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref UsersApi
+      RouteKey: "PUT /users/{id}"
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref UpdateUserIntegration
+  DeleteUserRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref UsersApi
+      RouteKey: "DELETE /users/{id}"
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref DeleteUserIntegration
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref UsersApi
+      StageName: dev
+      AutoDeploy: true
+  CreateUserPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CreateUserFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UsersApi}/*/*"
+  GetUserPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GetUserFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UsersApi}/*/*"
+  UpdateUserPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt UpdateUserFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UsersApi}/*/*"
+  DeleteUserPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt DeleteUserFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UsersApi}/*/*"
+  SendEmailEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt UserCreatedQueue.Arn
+      FunctionName: !GetAtt SendEmailFunction.Arn
+      Enabled: true
+
+Outputs:
+  ApiEndpoint:
+    Description: "La URL del endpoint para la API de Usuarios"
+    Value: !Sub "https://${UsersApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiStage}"
