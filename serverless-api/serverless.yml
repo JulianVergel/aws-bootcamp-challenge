@@ -7,7 +7,6 @@ service: serverless-api
 
 provider:
   name: aws
-  runtime: nodejs20.x
   region: us-east-2
   iamRoleStatements:
     - Effect: "Allow"
@@ -57,32 +56,34 @@ plugins:
 
 functions:
   createUser:
-    handler: handler.createUser
+    runtime: java17
+    package:
+      artifact: user-api-java/target/user-api-java-1.0-SNAPSHOT.jar
+    handler: org.example.handler.CreateUserHandler
     events:
       - httpApi:
           path: /users
           method: post
   getUser:
+    runtime: nodejs22.x
     handler: handler.getUser
     events:
       - httpApi:
           path: /users/{id}
           method: get
   updateUser:
-    handler: handler.updateUser
+    runtime: java17
+    package:
+      artifact: user-api-java/target/user-api-java-1.0-SNAPSHOT.jar
+    handler: org.example.handler.UpdateUserHandler
     events:
       - httpApi:
           path: /users/{id}
           method: put
   deleteUser:
+    runtime: nodejs22.x
     handler: handler.deleteUser
     events:
       - httpApi:
           path: /users/{id}
           method: delete
-  sendEmail:
-    handler: handler.sendEmail
-    events:
-      - sqs:
-          arn:
-            Fn::GetAtt: [ UserCreatedQueue, Arn ]
